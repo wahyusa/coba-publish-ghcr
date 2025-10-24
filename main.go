@@ -11,7 +11,7 @@ import (
 func main() {
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "8080" // default port
+		port = "80" // port I think should same with the port used in cloud
 	}
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
