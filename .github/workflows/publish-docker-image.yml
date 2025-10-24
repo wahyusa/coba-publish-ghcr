@@ -1,0 +1,87 @@
+name: 🚀 Build and Push Minimal Go Image to GHCR
+
+# Configures this workflow to run every time a change is pushed to 'main'.
+on:
+  push:
+    branches: ['main']
+    
+# Defines environment variables for the workflow.
+env:
+  REGISTRY: ghcr.io
+  # IMAGE_NAME automatically becomes 'owner/repo-name'
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build-and-push-image:
+    runs-on: ubuntu-latest
+    
+    # Sets the necessary permissions for building, pushing (packages: write), 
+    # and security features like attestations.
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+      
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4 # Use the latest version
+
+      # Step 1: Log in to the Container registry (GHCR)
+      - name: Log in to GHCR
+        uses: docker/login-action@v3 # Use the latest major version
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Step 2: Extract metadata (tags, labels) for Docker
+      # This generates tags like: 'ghcr.io/owner/repo:latest' and 'ghcr.io/owner/repo:sha-hash'
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@v5 # Use the latest major version
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=
+            type=raw,value=latest,enable={{is_default_branch}}
+            
+      # Step 3: Build and push the multi-stage Docker image
+      # The 'context: .' and 'Dockerfile' from your repo root will be used to 
+      # build the minimal Go image.
+      - name: Build and push Docker image
+        id: push
+        uses: docker/build-push-action@v5 # Use the latest major version
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      # Step 4: Generate artifact attestation for supply chain security
+      - name: Generate artifact attestation
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME}}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+          
+      # Step 5 (Added): Output the final GHCR URL/Tag
+      - name: Output Final Image URL
+        run: |
+          # Get the full list of generated tags (e.g., latest and SHA)
+          TAGS="${{ steps.meta.outputs.tags }}"
+          echo "✅ Image pushed to GHCR with the following tags:"
+          echo "$TAGS" | while IFS= read -r tag; do
+            echo "   - $tag"
+          done
+          
+          # Set the 'latest' tag as a job output for downstream steps/notifications
+          LATEST_TAG=$(echo "$TAGS" | grep 'latest' | head -n 1)
+          if [ -z "$LATEST_TAG" ]; then
+             LATEST_TAG=$(echo "$TAGS" | head -n 1)
+          fi
+          echo "IMAGE_URL=$LATEST_TAG" >> "$GITHUB_OUTPUT"
+          
+          echo "To pull: docker pull $LATEST_TAG"
+        id: output_url
